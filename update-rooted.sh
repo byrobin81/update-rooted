@@ -4,7 +4,7 @@ echo "==========================================================================
 echo "Welcome to the rooted Toon upgrade script. This script will try to upgrade your Toon using your original connection with Eneco. It will start the VPN if necessary."
 echo "Please be advised that running this script is at your own risk!"
 echo ""
-echo "Version: 2.86  - ThehogNL - 4-5-2018"
+echo "Version: 2.94  - ThehogNL - 19-7-2018"
 echo ""
 echo "==================================================================================================================================================================="
 echo ""
@@ -246,7 +246,7 @@ downloadUpgradeFile() {
 	fi
 
 	#check if there is a valid upgrade script
-	MD5SCRIPT="48006b5804b2a36fa1351bd92f3d7703"
+	MD5SCRIPT="b60d912b2a6cf8400b4405ffc9153e10"
 	MD5NOW=`/usr/bin/md5sum $PKGCACHE/upgrade-qb2.sh | cut -d\  -f1`
 	if [ !  "$MD5NOW" == "$MD5SCRIPT" ]
 	then
@@ -260,6 +260,9 @@ downloadUpgradeFile() {
 
 	#make sure the upgrade script doesn't reboot the device after finishing
 	/bin/sed -i '/shutdown/c\#removed shutdown' $PKGCACHE/upgrade-qb2.sh 
+
+        #removing the curl logging post to the servic center
+        /bin/sed -i '/curl.*31080/c\#removed curl post to service center' $PKGCACHE/upgrade-qb2.sh
 
 
 	#fixing /etc/hosts again so that toonstore can use it
@@ -380,21 +383,54 @@ exitFail() {
 	exit
 }
 
+downloadResourceFile() {
+	RESOURCEFILEURL="http://files.domoticaforum.eu/uploads/Toon/resourcefiles/resources-qb2-$RUNNINGVERSION.zip"
+	/usr/bin/wget  $RESOURCEFILEURL -O /tmp/resources-qb2-$RUNNINGVERSION.zip -T 5 -t 2 -o /dev/null
+	RESULT=$?
+
+	if [ ! $RESULT == 0 ]
+	then 
+		echo "Could not download a resources.rcc file for this version! Continuing, but your custom apps probably dont work anymore" 
+	else 
+		mv /qmf/qml/resources-static-base.rcc /qmf/qml/resources-static-base.rcc.backup
+		/usr/bin/unzip -oq /tmp/resources-qb2-$RUNNINGVERSION.zip -d /qmf/qml
+	fi
+}
+
+overrideFirewallAlways () {
+
+	echo "sed -i '/-A INPUT -j HCB-INPUT/a\#override to allow all input\n-I INPUT -j ACCEPT' /etc/default/iptables.conf" > /etc/rcS.d/S39fixiptables
+	/bin/chmod +x /etc/rcS.d/S39fixiptables
+
+
+}
+
 fixFiles() {
-	echo "FIXING: Trying to fix Global.qml now to add all the Toonstore installed apps again." 
-	fixGlobalsFile
-	echo "FIXING: Now fixing internet settings app to fake ST_TUNNEL mode."
-	fixInternetSettingsApp
-	echo "FIXING: Now modifying notifications bar to not show any network errors" 
-	removeNetworkErrorNotifications
+	RUNNINGVERSION=`opkg list-installed base-qb2-\* | sed -r -e "s/base-qb2-([a-z]{3})\s-\s([0-9]*\.[0-9]*\.[0-9]*)-.*/\2/"`
+	VERS_MAJOR="`echo $RUNNINGVERSION | sed -n -r -e 's,([0-9]+).([0-9]+).([0-9]+),\1,p'`"
+	VERS_MINOR="`echo $RUNNINGVERSION | sed -n -r -e 's,([0-9]+).([0-9]+).([0-9]+),\2,p'`"
+	VERS_BUILD="`echo $RUNNINGVERSION | sed -n -r -e 's,([0-9]+).([0-9]+).([0-9]+),\3,p'`"
+
+	#from version 4.16 we need to download resources.rcc mod
+	if [ $VERS_MAJOR -gt 4 ] || [ $VERS_MAJOR -eq 4 -a $VERS_MINOR -ge 16 ]
+	then 
+		echo "FIXING: Downloading resources.rcc TSC mod for this version $RUNNINGVERSION."
+		downloadResourceFile
+	else 
+		echo "FIXING: Trying to fix Global.qml now to add all the Toonstore installed apps again." 
+		fixGlobalsFile
+		echo "FIXING: Now fixing internet settings app to fake ST_TUNNEL mode."
+		fixInternetSettingsApp
+		echo "FIXING: Now modifying notifications bar to not show any network errors" 
+		removeNetworkErrorNotifications
+	fi
 	echo "FIXING: Now installing latest toonstore app. This fixes some files also."
 	installToonStore
 	echo "FIXING: Now installing latest busybox mod. This is necessary to enable console output again which is disabled in 4.10 by Eneco." 
 	installBusybox
 }
+
 #main
-
-
 STEP=0
 VERSION=""
 SOURCE="http://feed.hae.int/feeds"
